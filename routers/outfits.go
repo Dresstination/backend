@@ -14,5 +14,7 @@ func OutfitRoute(r *gin.Engine, firebaseClient *modules.FirebaseClient, fs *modu
 	r.GET("/outfits", middleware.TokenAuthMiddleware(), func(c *gin.Context) {
 		controllers.GetOutfit(c, firebaseClient)
 	})
-	// r.GET("/outfits", middleware.TokenAuthMiddleware(), controllers.GetOutfitsHistory)
+	r.GET("/outfits", middleware.TokenAuthMiddleware(), func(c *gin.Context) {
+		controllers.GetAllOutfits(c, firebaseClient)
+	})
 }

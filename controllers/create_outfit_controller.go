@@ -8,7 +8,9 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -254,6 +256,185 @@ func GenerateImageLinks(output *models.Outfit, fs *modules.FS) error {
 
 	return nil
 }
+func GenerateProducts(outfitItem *models.Outfit) ([]*models.Product, error) {
+	var wg sync.WaitGroup
+	productChan := make(chan *models.Product, len(outfitItem.OutfitElements))
+	errChan := make(chan error, len(outfitItem.OutfitElements))
+
+	for _, element := range outfitItem.OutfitElements {
+		wg.Add(1)
+		go func(element models.OutfitElement) {
+			defer wg.Done()
+
+			searchQuery := element.SearchQuery
+			results, err := SearchProductsOnInternet(searchQuery)
+			if err != nil {
+				errChan <- fmt.Errorf("error searching products: %v", err)
+				return
+			}
+
+			productChan <- results
+		}(element)
+	}
+
+	wg.Wait()
+	close(productChan)
+	close(errChan)
+
+	var products []*models.Product
+	for product := range productChan {
+		products = append(products, product)
+	}
+
+	for err := range errChan {
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return products, nil
+}
+
+func SearchProductsOnInternet(searchQuery string) (*models.Product, error) {
+	searchQuery = searchQuery + " Amazon, Flipkart, Myntra"
+	resultsV1, err := FindProducts(searchQuery)
+	if err != nil {
+		return nil, err
+	}
+
+	resultsV2, err := FindProductsV2(searchQuery)
+	if err != nil {
+		return nil, err
+	}
+
+	combinedResults := append(resultsV1, resultsV2...)
+	sort.Slice(combinedResults, func(i, j int) bool {
+		return (combinedResults[j].Platform != "") && !(combinedResults[i].Platform != "")
+	})
+
+	return combinedResults, nil
+}
+
+func FindProducts(topic string) ([]*models.Product, error) {
+	var results []*models.Product
+
+	params := url.Values{}
+	params.Set("q", topic)
+	params.Set("key", os.Getenv("GOOGLE_API_KEY"))
+	params.Set("cx", os.Getenv("GOOGLE_ACCOUNT_CX"))
+
+	resp, err := http.Get("https://www.googleapis.com/customsearch/v1?" + params.Encode())
+	if err != nil {
+		return nil, fmt.Errorf("error making Google Custom Search API request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var response struct {
+		Items []struct {
+			Kind    string `json:"kind"`
+			Pagemap struct {
+				CseImage []struct {
+					Src string `json:"src"`
+				} `json:"cse_image"`
+			} `json:"pagemap"`
+			Title string `json:"title"`
+			Link  string `json:"link"`
+		} `json:"items"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return nil, fmt.Errorf("error decoding Google Custom Search API response: %v", err)
+	}
+
+	for _, item := range response.Items {
+		imageURL := item.Pagemap.CseImage[0].Src
+		title := item.Title
+		link := item.Link
+
+		if imageURL == "" || title == "" || link == "" {
+			continue
+		}
+
+		price, currency := ExtractPriceAndCurrency(item)
+
+		var platform string
+		for key, value := range predefinedPlatforms {
+			for _, v := range value {
+				if strings.Contains(link, v) {
+					platform = key
+					break
+				}
+			}
+		}
+
+		product := &models.Product{
+			ImageURL: imageURL,
+			Title:    title,
+			Link:     link,
+			Price:    price,
+			Platform: platform,
+		}
+
+		results = append(results, product)
+	}
+
+	return results, nil
+}
+
+func FindProductsV2(topic string) ([]*models.Product, error) {
+	params := map[string]string{
+		"engine":  "google_shopping",
+		"q":       topic,
+		"api_key": os.Getenv("SERAPAPI_KEY"),
+		"num":     "10",
+	}
+
+	res, err := getJson(params)
+	if err != nil {
+		return nil, fmt.Errorf("error making SERP API request: %v", err)
+	}
+
+	var results []*models.Product
+	for _, item := range res.ShoppingResults {
+		var platform string
+		for key, value := range predefinedPlatforms {
+			for _, v := range value {
+				if strings.Contains(item.Source, v) {
+					platform = key
+					break
+				}
+			}
+		}
+
+		product := &models.Product{
+			ImageURL: item.Thumbnail,
+			Title:    item.Title,
+			Link:     item.Link,
+			Price:    item.Price,
+			Platform: platform,
+		}
+
+		results = append(results, product)
+	}
+
+	return results, nil
+}
+
+func ExtractPriceAndCurrency(item struct{}) (string, string) {
+	if item.Pagemap.Metatags[0]["product:price:amount"] != nil {
+		return item.Pagemap.Metatags[0]["product:price:amount"].(string), item.Pagemap.Metatags[0]["product:price:currency"].(string)
+	}
+
+	if item.Pagemap.Offer[0].PriceCurrency != nil {
+		return item.Pagemap.Offer[0].Price.(string), item.Pagemap.Offer[0].PriceCurrency.(string)
+	}
+
+	if item.Pagemap.Product[0].Price != nil {
+		return item.Pagemap.Product[0].Price.(string), item.Pagemap.Product[0].PriceCurrency.(string)
+	}
+
+	return "", ""
+}
 
 func CreateOutfit(c *gin.Context, firebaseClient *modules.FirebaseClient, fs *modules.FS) {
 	var req OutfitRequest
@@ -290,6 +471,8 @@ func CreateOutfit(c *gin.Context, firebaseClient *modules.FirebaseClient, fs *mo
 	}
 
 	log.Println("Map Output", outputMap)
+
+	// Generate and populate Prodcuts
 
 	// Upsert the document in Firestore
 	collection := "outfits" // Replace with your Firestore collection name
