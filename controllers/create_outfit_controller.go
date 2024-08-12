@@ -98,7 +98,7 @@ func GenerateOutfitsObject(requirements string) (*models.Outfit, error) {
 		},
 	}
 
-	prompt := "You will be given a requirements. You are supposed to generate a title for the occassion/need and then provide an array of strictly 4 different outfits. Each element in the array will have a title, a description, a detailed image prompt that can be used to feed to an AI image generation engine to generate the image of the outift, a search query that can be fed into a shopping website like Amazon.\n\nRequirements: " + requirements
+	prompt := "You will be given a requirements. You are supposed to generate a title for the occassion/need and then provide an array of strictly 5 different outfits. Each element in the array will have a title, a description, a detailed image prompt that can be used to feed to an AI image generation engine to generate the image of the outift, a search query that can be fed into a shopping website like Amazon.\n\nRequirements: " + requirements
 
 	resp, err := model.GenerateContent(ctx, genai.Text(prompt))
 	if err != nil {
@@ -140,7 +140,7 @@ func GenerateImageLinks(output *models.Outfit, fs *modules.FS) error {
 	var wg sync.WaitGroup
 	errChan := make(chan error, len(output.OutfitElements))
 
-	// bucketName := "dresstination-a2b2f"
+	bucketName := "dresstination-a2b2f"
 
 	for i, element := range output.OutfitElements {
 		wg.Add(1)
@@ -190,12 +190,13 @@ func GenerateImageLinks(output *models.Outfit, fs *modules.FS) error {
 			}
 
 			var response map[string]interface{}
-
+			log.Println("Trying to unmarshal")
 			if err := json.Unmarshal(body, &response); err != nil {
 				errChan <- fmt.Errorf("error decoding response: %v", err)
 				return
 			}
 
+			log.Println("Unmarshalled Response", response)
 			data, ok := response["data"].([]interface{})
 			if !ok || len(data) == 0 {
 				errChan <- fmt.Errorf("invalid response format")
@@ -208,37 +209,37 @@ func GenerateImageLinks(output *models.Outfit, fs *modules.FS) error {
 				return
 			}
 
-			_, ok = imageData["url"].(string)
+			imageURL, ok := imageData["url"].(string)
 			if !ok {
 				errChan <- fmt.Errorf("image URL not found in response")
 				return
 			}
 			// output.OutfitElements[i].ImageLink = imageURL
 
-			// // Download the image
-			// resp, err = http.Get(imageURL)
-			// if err != nil {
-			// 	errChan <- fmt.Errorf("error downloading image: %v", err)
-			// 	return
-			// }
-			// defer resp.Body.Close()
+			// Download the image
+			resp, err = http.Get(imageURL)
+			if err != nil {
+				errChan <- fmt.Errorf("error downloading image: %v", err)
+				return
+			}
+			defer resp.Body.Close()
 
-			// imageBytes, err := io.ReadAll(resp.Body)
-			// if err != nil {
-			// 	errChan <- fmt.Errorf("error reading image data: %v", err)
-			// 	return
-			// }
+			imageBytes, err := io.ReadAll(resp.Body)
+			if err != nil {
+				errChan <- fmt.Errorf("error reading image data: %v", err)
+				return
+			}
 
-			// // Upload the image to Firebase Storage
-			// firebaseFilePath := fmt.Sprintf("outfits/image_%d.png", i)
-			// if err := fs.Upload(imageBytes, bucketName, firebaseFilePath); err != nil {
-			// 	errChan <- fmt.Errorf("error uploading image to Firebase: %v", err)
-			// 	return
-			// }
+			// Upload the image to Firebase Storage
+			firebaseFilePath := fmt.Sprintf("outfits/image_%d.png", i)
+			if err := fs.Upload(imageBytes, bucketName, firebaseFilePath); err != nil {
+				errChan <- fmt.Errorf("error uploading image to Firebase: %v", err)
+				return
+			}
 
-			// // Get the public URL of the uploaded image
-			// imageLink := fmt.Sprintf("https://storage.googleapis.com/%s/%s", bucketName, firebaseFilePath)
-			// output.OutfitElements[i].ImageLink = imageLink
+			// Get the public URL of the uploaded image
+			imageLink := fmt.Sprintf("https://storage.googleapis.com/%s/%s", bucketName, firebaseFilePath)
+			output.OutfitElements[i].ImageLink = imageLink
 		}(i, element)
 	}
 
