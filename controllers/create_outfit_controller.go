@@ -7,10 +7,10 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/generative-ai-go/genai"
-	"github.com/joho/godotenv"
 	"github.com/kshitij-404/dresstination-backend/models"
 	"google.golang.org/api/option"
 )
@@ -33,11 +33,6 @@ type ContentResponse struct {
 }
 
 func GenerateOutfitsObject(requirements string) (*models.Outfit, error) {
-	// Load environment variables
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatal("Error loading .env key")
-	}
 
 	apiKey := os.Getenv("GEMINI_API_KEY")
 	if apiKey == "" {
@@ -117,44 +112,67 @@ func GenerateOutfitsObject(requirements string) (*models.Outfit, error) {
 	}
 
 	fmt.Println("RESP", resp.Candidates[0].Content.Parts[0])
-	type OutfitElement struct {
-		Description string `json:"description"`
-		ImagePrompt string `json:"image_prompt"`
-		SearchQuery string `json:"search_query"`
-		Title       string `json:"title"`
-	}
 
-	type Outfit struct {
-		OutfitElements []OutfitElement `json:"outfit_elements"`
-		Title          string          `json:"title"`
-	}
-
-	var formattedData Outfit
+	var formattedData models.Outfit
 	marshalResponse, _ := json.Marshal(resp.Candidates[0].Content.Parts[0])
-	err = json.Unmarshal(marshalResponse, &formattedData)
+	// err = json.Unmarshal(marshalResponse, &formattedData)
 	fmt.Println("MYDATA", formattedData, err)
 
 	// Debugging: Print the marshalled response
-	fmt.Println("MRS", marshalResponse)
+	fmt.Println("MRS", string(marshalResponse))
+
+	stringMarshalResponse := string(marshalResponse)
 
 	// Debugging: Print the raw response
 	// fmt.Printf("Raw response: %+v\n", resp)
 
-	var generateResponse ContentResponse
+	// var generateResponse ContentResponse
 	// marshalResponse, _ := json.Marshal(resp)
 	// if err := json.Unmarshal(marshalResponse, &generateResponse); err != nil {
 	//     return nil, fmt.Errorf("error unmarshalling response: %v", err)
 	// }
 
+	stringMarshalResponse2 := strings.ReplaceAll(stringMarshalResponse, "\\\"", "\"")
+
+	fmt.Println("alpha", stringMarshalResponse2)
+
+	correctedString := strings.Trim(stringMarshalResponse2, "\"")
+	fmt.Println("correctedString", correctedString)
+
 	var outfitResponse models.Outfit
 
-	for _, cad := range generateResponse.Candidates {
-		if cad.Content != nil {
-			for _, part := range cad.Content.Parts {
-				fmt.Printf("%T\n", part)
-			}
-		}
+	err = json.Unmarshal([]byte(correctedString), &outfitResponse)
+
+	// if err != nil {
+	// 	return nil, fmt.Errorf("error unmarshalling response: %v", err)
+	// }
+
+	// jsonString := `{"outfit_elements": [{"description": "This is the perfect outfit for a winter wedding guest who wants to be both stylish and warm. The velvet dress is festive and flattering, while the faux fur stole adds a touch of luxury. The tights and booties will keep you warm, and the clutch is the perfect size for your essentials.", "image_prompt": "Woman in a burgundy velvet midi dress with long sleeves and a-line silhouette, paired with black sheer tights, black ankle boots with block heels, a black faux fur stole draped over her shoulders, and a black clutch. She has wavy brunette hair styled in a side part, natural makeup with a bold red lip, and minimal jewelry, creating an elegant and warm look for a winter wedding guest.", "search_query": "burgundy velvet midi dress, black sheer tights, black ankle boots block heels, black faux fur stole, black clutch", "title": "Elegant Velvet Warmth"}], "title": "Winter Wedding Guest Outfit Inspiration"}`
+	// fmt.Println("beta", jsonString)
+	// var outfit models.Outfit
+	// err = json.Unmarshal([]byte(jsonString), &outfit)
+	if err != nil {
+		log.Fatalf("go play Error unmarshalling JSON: %v", err)
 	}
+
+	// fmt.Printf("Successfully parsed JSON: %+v\n", outfit)
+
+	// fmt.Printf("Outfit response\n")
+	// outputJSON, err := json.MarshalIndent(outfitResponse, "", "    ")
+
+	// if err != nil {
+	// 	return nil, fmt.Errorf("error marshalling response: %v", err)
+	// }
+
+	// fmt.Println(string(outputJSON))
+
+	// for _, cad := range generateResponse.Candidates {
+	// 	if cad.Content != nil {
+	// 		for _, part := range cad.Content.Parts {
+	// 			fmt.Printf("%T\n", part)
+	// 		}
+	// 	}
+	// }
 
 	//         contentBytes, err := json.Marshal(cad.Content)
 	//         if err != nil {
