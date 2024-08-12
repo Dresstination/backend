@@ -1,16 +1,17 @@
 package modules
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
-	"bytes"
 	"time"
+
 	"cloud.google.com/go/firestore"
 	"cloud.google.com/go/storage"
 	firebase "firebase.google.com/go"
+	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
-
 )
 
 // FirebaseClient is a wrapper around the firebase.App client.
@@ -20,21 +21,21 @@ type FirebaseClient struct {
 }
 
 type FS struct {
-    client                *storage.Client
-    defaultTransferTimeout time.Duration
+	client                 *storage.Client
+	defaultTransferTimeout time.Duration
 }
 
 func NewFS(credentialsFilePath string, defaultTransferTimeout time.Duration) (*FS, error) {
-    ctx := context.Background()
-    client, err := storage.NewClient(ctx, option.WithCredentialsFile(credentialsFilePath))
-    if err != nil {
-        return nil, err
-    }
+	ctx := context.Background()
+	client, err := storage.NewClient(ctx, option.WithCredentialsFile(credentialsFilePath))
+	if err != nil {
+		return nil, err
+	}
 
-    return &FS{
-        client:                client,
-        defaultTransferTimeout: defaultTransferTimeout,
-    }, nil
+	return &FS{
+		client:                 client,
+		defaultTransferTimeout: defaultTransferTimeout,
+	}, nil
 }
 
 // NewFirebaseClient creates a new Firebase client with the provided project ID and secrets JSON.
@@ -71,6 +72,31 @@ func (f *FirebaseClient) GetDocument(collection string, document string) (map[st
 	}
 
 	return doc.Data(), nil
+}
+
+// GetAllDocuments with Filter
+func (f *FirebaseClient) GetAllDocuments(collection string, filter string, value string) ([]map[string]interface{}, error) {
+	firestoreClient, err := f.client.Firestore(f.ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer firestoreClient.Close()
+
+	var documents []map[string]interface{}
+
+	iter := firestoreClient.Collection(collection).Where(filter, "==", value).Documents(f.ctx)
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		documents = append(documents, doc.Data())
+	}
+
+	return documents, nil
 }
 
 // DeleteDocument deletes a document from the specified collection in Firestore.
@@ -128,21 +154,21 @@ func (f *FirebaseClient) InsertDocument(collection string, data map[string]inter
 }
 
 func (fs *FS) Upload(fileInput []byte, bucketName, fileName string) error {
-    ctx, cancel := context.WithTimeout(context.Background(), fs.defaultTransferTimeout)
-    defer cancel()
+	ctx, cancel := context.WithTimeout(context.Background(), fs.defaultTransferTimeout)
+	defer cancel()
 
-    bucket := fs.client.Bucket(bucketName)
-    object := bucket.Object(fileName)
-    writer := object.NewWriter(ctx)
-    defer writer.Close()
+	bucket := fs.client.Bucket(bucketName)
+	object := bucket.Object(fileName)
+	writer := object.NewWriter(ctx)
+	defer writer.Close()
 
-    if _, err := io.Copy(writer, bytes.NewReader(fileInput)); err != nil {
-        return err
-    }
+	if _, err := io.Copy(writer, bytes.NewReader(fileInput)); err != nil {
+		return err
+	}
 
-    if err := object.ACL().Set(context.Background(), storage.AllUsers, storage.RoleReader); err != nil {
-        return err
-    }
+	if err := object.ACL().Set(context.Background(), storage.AllUsers, storage.RoleReader); err != nil {
+		return err
+	}
 
-    return nil
+	return nil
 }

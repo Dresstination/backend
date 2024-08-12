@@ -11,6 +11,8 @@ func OutfitRoute(r *gin.Engine, firebaseClient *modules.FirebaseClient, fs *modu
 	r.POST("/outfits", middleware.TokenAuthMiddleware(), func(c *gin.Context) {
 		controllers.CreateOutfit(c, firebaseClient, fs)
 	})
-	// r.GET("/outfits/:id", middleware.TokenAuthMiddleware(), controllers.GetOutfits)
+	r.GET("/outfits", middleware.TokenAuthMiddleware(), func(c *gin.Context) {
+		controllers.GetOutfit(c, firebaseClient)
+	})
 	// r.GET("/outfits", middleware.TokenAuthMiddleware(), controllers.GetOutfitsHistory)
 }
