@@ -1,45 +1,196 @@
 package controllers
 
 import (
-    "net/http"
+	"context"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
 
-    "github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin"
+	"github.com/google/generative-ai-go/genai"
+	"github.com/joho/godotenv"
+	"github.com/kshitij-404/dresstination-backend/models"
+	"google.golang.org/api/option"
 )
 
-type Product struct {
-    ID       string  `json:"id"`
-    Image    string  `json:"image"`
-    Title    string  `json:"title"`
-    Price    float64 `json:"price"`
-    Currency string  `json:"currency"`
-    Link     string  `json:"link"`
+type OutfitRequest struct {
+	Requirements string `json:"requirements" binding:"required"`
 }
 
-type OutfitElement struct {
-    ID          string    `json:"id"`
-    Title       string    `json:"title"`
-    Description string    `json:"description"`
-    ImageLink   string    `json:"image_link"`
-    SearchQuery string    `json:"search_query"`
-    Products    []Product `json:"products"`
+type Content struct {
+	Parts []string `json:"Parts"`
+	Role  string   `json:"Role"`
 }
 
-type Outfit struct {
-    ID            string          `json:"id"`
-    Title         string          `json:"title"`
-    OutfitElements []OutfitElement `json:"outfit_elements"`
+type Candidates struct {
+	Content *Content `json:"Content"`
+}
+
+type ContentResponse struct {
+	Candidates []Candidates `json:"Candidates"`
+}
+
+func GenerateOutfitsObject(requirements string) (*models.Outfit, error) {
+	// Load environment variables
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatal("Error loading .env key")
+	}
+
+	apiKey := os.Getenv("GEMINI_API_KEY")
+	if apiKey == "" {
+		log.Fatal("Environment variable GEMINI_API_KEY not set")
+	}
+
+	ctx := context.Background()
+	client, err := genai.NewClient(ctx, option.WithAPIKey(apiKey))
+	if err != nil {
+		log.Fatalf("Error creating client: %v\n", err)
+	}
+	defer client.Close()
+
+	model := client.GenerativeModel("gemini-1.5-pro")
+	model.SetTemperature(1)
+	model.SetTopK(64)
+	model.SetTopP(0.95)
+	model.SetMaxOutputTokens(8192)
+	model.ResponseMIMEType = "application/json"
+	model.ResponseSchema = &genai.Schema{
+		Type:     genai.TypeObject,
+		Enum:     []string{},
+		Required: []string{"title", "outfit_elements"},
+		Properties: map[string]*genai.Schema{
+			"title": &genai.Schema{
+				Type: genai.TypeString,
+			},
+			"outfit_elements": &genai.Schema{
+				Type: genai.TypeArray,
+				Items: &genai.Schema{
+					Type:     genai.TypeObject,
+					Enum:     []string{},
+					Required: []string{"title", "description", "search_query", "image_prompt"},
+					Properties: map[string]*genai.Schema{
+						"title": &genai.Schema{
+							Type: genai.TypeString,
+						},
+						"description": &genai.Schema{
+							Type: genai.TypeString,
+						},
+						"search_query": &genai.Schema{
+							Type: genai.TypeString,
+						},
+						"image_prompt": &genai.Schema{
+							Type: genai.TypeString,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	model.SafetySettings = []*genai.SafetySetting{
+		{
+			Category:  genai.HarmCategoryHarassment,
+			Threshold: genai.HarmBlockNone,
+		},
+		{
+			Category:  genai.HarmCategoryHateSpeech,
+			Threshold: genai.HarmBlockNone,
+		},
+		{
+			Category:  genai.HarmCategorySexuallyExplicit,
+			Threshold: genai.HarmBlockNone,
+		},
+		{
+			Category:  genai.HarmCategoryDangerousContent,
+			Threshold: genai.HarmBlockNone,
+		},
+	}
+
+	prompt := "You will be given a requirements. You are supposed to generate a title for the occassion/need and then provide an array of strictly 4 different outfits. Each element in the array will have a title, a description, a detailed image prompt that can be used to feed to an AI image generation engine to generate the image of the outift, a search query that can be fed into a shopping website like Amazon.\n\nRequirements: " + requirements
+
+	resp, err := model.GenerateContent(ctx, genai.Text(prompt))
+	if err != nil {
+		return nil, err
+	}
+
+	fmt.Println("RESP", resp.Candidates[0].Content.Parts[0])
+	type OutfitElement struct {
+		Description string `json:"description"`
+		ImagePrompt string `json:"image_prompt"`
+		SearchQuery string `json:"search_query"`
+		Title       string `json:"title"`
+	}
+
+	type Outfit struct {
+		OutfitElements []OutfitElement `json:"outfit_elements"`
+		Title          string          `json:"title"`
+	}
+
+	var formattedData Outfit
+	marshalResponse, _ := json.Marshal(resp.Candidates[0].Content.Parts[0])
+	err = json.Unmarshal(marshalResponse, &formattedData)
+	fmt.Println("MYDATA", formattedData, err)
+
+	// Debugging: Print the marshalled response
+	fmt.Println("MRS", marshalResponse)
+
+	// Debugging: Print the raw response
+	// fmt.Printf("Raw response: %+v\n", resp)
+
+	var generateResponse ContentResponse
+	// marshalResponse, _ := json.Marshal(resp)
+	// if err := json.Unmarshal(marshalResponse, &generateResponse); err != nil {
+	//     return nil, fmt.Errorf("error unmarshalling response: %v", err)
+	// }
+
+	var outfitResponse models.Outfit
+
+	for _, cad := range generateResponse.Candidates {
+		if cad.Content != nil {
+			for _, part := range cad.Content.Parts {
+				fmt.Printf("%T\n", part)
+			}
+		}
+	}
+
+	//         contentBytes, err := json.Marshal(cad.Content)
+	//         if err != nil {
+	//             return nil, fmt.Errorf("error marshalling content: %v", err)
+	//         }
+	//         // Debugging: Print the marshalled content
+	//         fmt.Printf("Marshalled content: %s\n", string(contentBytes))
+
+	//         // Unmarshal the content into the outfitResponse
+	//         err = json.Unmarshal(contentBytes, &outfitResponse)
+	//         if err != nil {
+	//             return nil, fmt.Errorf("error unmarshalling response: %v", err)
+	//         }
+	//         break
+	//     }
+	// }
+
+	// // Debugging: Print the final outfit response
+	// fmt.Printf("Final outfit response: %+v\n", outfitResponse)
+
+	return &outfitResponse, nil
 }
 
 func CreateOutfits(c *gin.Context) {
-    var newOutfit Outfit
+	var req OutfitRequest
 
-    // Bind the JSON body to the newOutfit struct
-    if err := c.ShouldBindJSON(&newOutfit); err != nil {
-        c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-        return
-    }
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 
-    // Here you would typically save the newOutfit to a database
-    // For this example, we'll just return the newOutfit as a response
-    c.JSON(http.StatusCreated, newOutfit)
+	output, err := GenerateOutfitsObject(req.Requirements)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"output": output})
 }
