@@ -214,7 +214,7 @@ func GenerateImageLinks(output *models.Outfit, fs *modules.FS) error {
 				errChan <- fmt.Errorf("image URL not found in response")
 				return
 			}
-			// output.OutfitElements[i].ImageLink = imageURL
+			log.Println("Unmarshalled Image URL", imageURL)
 
 			// Download the image
 			resp, err = http.Get(imageURL)
@@ -274,22 +274,28 @@ func CreateOutfit(c *gin.Context, firebaseClient *modules.FirebaseClient, fs *mo
 		return
 	}
 
+	log.Println("Output", output)
+
 	// Convert the output to a map[string]interface{}
 	outputMap := make(map[string]interface{})
 	outputBytes, err := json.Marshal(output)
+	log.Println("Marshalled Output", string(outputBytes))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"Marshalling error for firestore": err.Error()})
 		return
 	}
 	if err := json.Unmarshal(outputBytes, &outputMap); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"Unmarshalling error for firestore": err.Error})
 		return
 	}
+
+	log.Println("Map Output", outputMap)
 
 	// Upsert the document in Firestore
 	collection := "outfits" // Replace with your Firestore collection name
 	if err := firebaseClient.InsertDocument(collection, outputMap); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Println("Insertion error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"Insertion error": err.Error()})
 		return
 	}
 
