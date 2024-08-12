@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/kshitij-404/dresstination-backend/modules"
 )
 
 var db = map[string]string{
@@ -14,7 +15,7 @@ var db = map[string]string{
 }
 
 // GetUser handles the GET /user route
-func GetUser(c *gin.Context) {
+func GetUser(c *gin.Context, firebaseClient *modules.FirebaseClient, fs *modules.FS) {
 	user := c.MustGet("user").(string)
 	value, ok := db[user]
 	if ok {

@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/kshitij-404/dresstination-backend/modules"
 )
 
 var secrets = gin.H{
@@ -14,7 +15,7 @@ var secrets = gin.H{
 }
 
 // GetSecrets handles the GET /admin/secrets route
-func GetSecrets(c *gin.Context) {
+func GetSecrets(c *gin.Context, firebaseClient *modules.FirebaseClient, fs *modules.FS) {
 	user := c.MustGet("user").(string)
 	if secret, ok := secrets[user]; ok {
 		c.JSON(http.StatusOK, gin.H{"user": user, "secret": secret})

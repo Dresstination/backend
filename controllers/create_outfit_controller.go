@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,28 +9,19 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
+	"io"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/generative-ai-go/genai"
+	// "cloud.google.com/go/storage"
 	"github.com/kshitij-404/dresstination-backend/models"
+	"github.com/kshitij-404/dresstination-backend/modules"
 	"google.golang.org/api/option"
 )
 
 type OutfitRequest struct {
 	Requirements string `json:"requirements" binding:"required"`
-}
-
-type Content struct {
-	Parts []string `json:"Parts"`
-	Role  string   `json:"Role"`
-}
-
-type Candidates struct {
-	Content *Content `json:"Content"`
-}
-
-type ContentResponse struct {
-	Candidates []Candidates `json:"Candidates"`
 }
 
 func GenerateOutfitsObject(requirements string) (*models.Outfit, error) {
@@ -111,92 +103,153 @@ func GenerateOutfitsObject(requirements string) (*models.Outfit, error) {
 		return nil, err
 	}
 
-	fmt.Println("RESP", resp.Candidates[0].Content.Parts[0])
+	// fmt.Println("RESP", resp.Candidates[0].Content.Parts[0])
 
-	var formattedData models.Outfit
 	marshalResponse, _ := json.Marshal(resp.Candidates[0].Content.Parts[0])
-	// err = json.Unmarshal(marshalResponse, &formattedData)
-	fmt.Println("MYDATA", formattedData, err)
 
 	// Debugging: Print the marshalled response
-	fmt.Println("MRS", string(marshalResponse))
+	// fmt.Println("MRS", string(marshalResponse))
 
 	stringMarshalResponse := string(marshalResponse)
 
-	// Debugging: Print the raw response
-	// fmt.Printf("Raw response: %+v\n", resp)
+	stringMarshalResponse = strings.ReplaceAll(stringMarshalResponse, "\\\"", "\"")
 
-	// var generateResponse ContentResponse
-	// marshalResponse, _ := json.Marshal(resp)
-	// if err := json.Unmarshal(marshalResponse, &generateResponse); err != nil {
-	//     return nil, fmt.Errorf("error unmarshalling response: %v", err)
-	// }
+	// fmt.Println("alpha", stringMarshalResponse)
 
-	stringMarshalResponse2 := strings.ReplaceAll(stringMarshalResponse, "\\\"", "\"")
-
-	fmt.Println("alpha", stringMarshalResponse2)
-
-	correctedString := strings.Trim(stringMarshalResponse2, "\"")
-	fmt.Println("correctedString", correctedString)
+	stringMarshalResponse = strings.Trim(stringMarshalResponse, "\"")
+	// fmt.Println("correctedString", stringMarshalResponse)
 
 	var outfitResponse models.Outfit
 
-	err = json.Unmarshal([]byte(correctedString), &outfitResponse)
+	err = json.Unmarshal([]byte(stringMarshalResponse), &outfitResponse)
 
-	// if err != nil {
-	// 	return nil, fmt.Errorf("error unmarshalling response: %v", err)
-	// }
-
-	// jsonString := `{"outfit_elements": [{"description": "This is the perfect outfit for a winter wedding guest who wants to be both stylish and warm. The velvet dress is festive and flattering, while the faux fur stole adds a touch of luxury. The tights and booties will keep you warm, and the clutch is the perfect size for your essentials.", "image_prompt": "Woman in a burgundy velvet midi dress with long sleeves and a-line silhouette, paired with black sheer tights, black ankle boots with block heels, a black faux fur stole draped over her shoulders, and a black clutch. She has wavy brunette hair styled in a side part, natural makeup with a bold red lip, and minimal jewelry, creating an elegant and warm look for a winter wedding guest.", "search_query": "burgundy velvet midi dress, black sheer tights, black ankle boots block heels, black faux fur stole, black clutch", "title": "Elegant Velvet Warmth"}], "title": "Winter Wedding Guest Outfit Inspiration"}`
-	// fmt.Println("beta", jsonString)
-	// var outfit models.Outfit
-	// err = json.Unmarshal([]byte(jsonString), &outfit)
 	if err != nil {
-		log.Fatalf("go play Error unmarshalling JSON: %v", err)
+		return nil, fmt.Errorf("error unmarshalling response: %v", err)
 	}
-
-	// fmt.Printf("Successfully parsed JSON: %+v\n", outfit)
-
-	// fmt.Printf("Outfit response\n")
-	// outputJSON, err := json.MarshalIndent(outfitResponse, "", "    ")
-
-	// if err != nil {
-	// 	return nil, fmt.Errorf("error marshalling response: %v", err)
-	// }
-
-	// fmt.Println(string(outputJSON))
-
-	// for _, cad := range generateResponse.Candidates {
-	// 	if cad.Content != nil {
-	// 		for _, part := range cad.Content.Parts {
-	// 			fmt.Printf("%T\n", part)
-	// 		}
-	// 	}
-	// }
-
-	//         contentBytes, err := json.Marshal(cad.Content)
-	//         if err != nil {
-	//             return nil, fmt.Errorf("error marshalling content: %v", err)
-	//         }
-	//         // Debugging: Print the marshalled content
-	//         fmt.Printf("Marshalled content: %s\n", string(contentBytes))
-
-	//         // Unmarshal the content into the outfitResponse
-	//         err = json.Unmarshal(contentBytes, &outfitResponse)
-	//         if err != nil {
-	//             return nil, fmt.Errorf("error unmarshalling response: %v", err)
-	//         }
-	//         break
-	//     }
-	// }
-
-	// // Debugging: Print the final outfit response
-	// fmt.Printf("Final outfit response: %+v\n", outfitResponse)
 
 	return &outfitResponse, nil
 }
 
-func CreateOutfits(c *gin.Context) {
+func GenerateImageLinks(output *models.Outfit, fs *modules.FS) error {
+    apiURL := "https://api.openai.com/v1/images/generations"
+    apiKey := os.Getenv("OPENAI_API")
+    var wg sync.WaitGroup
+    errChan := make(chan error, len(output.OutfitElements))
+
+    bucketName := "dresstination-a2b2f"
+
+    for i, element := range output.OutfitElements {
+        wg.Add(1)
+        go func(i int, element models.OutfitElement) {
+            defer wg.Done()
+
+            requestBody, err := json.Marshal(map[string]interface{}{
+                "model":  "dall-e-3",
+                "prompt": element.ImagePrompt,
+                "n":      1,
+                "size":   "1024x1024",
+            })
+            if err != nil {
+                errChan <- fmt.Errorf("error marshalling request body: %v", err)
+                return
+            }
+
+            req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(requestBody))
+            if err != nil {
+                errChan <- fmt.Errorf("error creating request: %v", err)
+                return
+            }
+
+			req.Header.Set("Content-Type", "application/json")
+            req.Header.Set("Authorization", "Bearer "+apiKey)
+
+			// Log the request details
+            log.Printf("Request URL: %s", apiURL)
+            log.Printf("Request Headers: %v", req.Header)
+            log.Printf("Request Body: %s", requestBody)
+
+            client := &http.Client{}
+            resp, err := client.Do(req)
+            if err != nil {
+                errChan <- fmt.Errorf("error making API request: %v", err)
+                return
+            }
+            defer resp.Body.Close()
+
+			body, _ := io.ReadAll(resp.Body)
+            log.Printf("Response Status: %s", resp.Status)
+            log.Printf("Response Body: %s", string(body))
+
+            if resp.StatusCode != http.StatusOK {
+                errChan <- fmt.Errorf("API request failed with status: %v", resp.Status)
+                return
+            }
+
+            var response map[string]interface{}
+
+			if err := json.Unmarshal(body, &response); err != nil {
+                errChan <- fmt.Errorf("error decoding response: %v", err)
+                return
+            }
+
+            data, ok := response["data"].([]interface{})
+            if !ok || len(data) == 0 {
+                errChan <- fmt.Errorf("invalid response format")
+                return
+            }
+
+            imageData, ok := data[0].(map[string]interface{})
+            if !ok {
+                errChan <- fmt.Errorf("invalid image data format")
+                return
+            }
+
+            imageURL, ok := imageData["url"].(string)
+            if !ok {
+                errChan <- fmt.Errorf("image URL not found in response")
+                return
+            }
+
+			// Download the image
+            resp, err = http.Get(imageURL)
+            if err != nil {
+                errChan <- fmt.Errorf("error downloading image: %v", err)
+                return
+            }
+            defer resp.Body.Close()
+
+            imageBytes, err := io.ReadAll(resp.Body)
+            if err != nil {
+                errChan <- fmt.Errorf("error reading image data: %v", err)
+                return
+            }
+
+            // Upload the image to Firebase Storage
+            firebaseFilePath := fmt.Sprintf("outfits/image_%d.png", i)
+            if err := fs.Upload(imageBytes, bucketName, firebaseFilePath); err != nil {
+                errChan <- fmt.Errorf("error uploading image to Firebase: %v", err)
+                return
+            }
+
+            // Get the public URL of the uploaded image
+            imageLink := fmt.Sprintf("https://storage.googleapis.com/%s/%s", bucketName, firebaseFilePath)
+            output.OutfitElements[i].ImageLink = imageLink
+        }(i, element)
+    }
+
+    wg.Wait()
+    close(errChan)
+
+	for err := range errChan {
+        if err != nil {
+            return err
+        }
+    }
+
+    return nil
+}
+
+func CreateOutfit(c *gin.Context, firebaseClient *modules.FirebaseClient, fs *modules.FS) {
 	var req OutfitRequest
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -209,6 +262,30 @@ func CreateOutfits(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+    if err := GenerateImageLinks(output, fs); err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+        return
+    }
+
+	// Convert the output to a map[string]interface{}
+    outputMap := make(map[string]interface{})
+    outputBytes, err := json.Marshal(output)
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+        return
+    }
+    if err := json.Unmarshal(outputBytes, &outputMap); err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+        return
+    }
+
+    // Upsert the document in Firestore
+    collection := "outfits" // Replace with your Firestore collection name
+    if err := firebaseClient.InsertDocument(collection, outputMap); err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+        return
+    }
 
 	c.JSON(http.StatusOK, gin.H{"output": output})
 }
