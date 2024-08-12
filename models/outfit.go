@@ -12,7 +12,7 @@ type OutfitElement struct {
 	Title       string    `json:"title"`
 	Description string    `json:"description"`
 	ImageLink   string    `json:"image_link"`
-	ImagePrompt string 	  `json:"image_prompt"`
+	ImagePrompt string    `json:"image_prompt"`
 	SearchQuery string    `json:"search_query"`
 	Products    []Product `json:"products"`
 }
@@ -20,4 +20,5 @@ type OutfitElement struct {
 type Outfit struct {
 	Title          string          `json:"title"`
 	OutfitElements []OutfitElement `json:"outfit_elements"`
+	Timestamp      int64           `json:"timestamp"`
 }
